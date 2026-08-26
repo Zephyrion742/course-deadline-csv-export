@@ -7,11 +7,11 @@ python -m pip install -e '.[test]'
 pytest -q
 ```
 
-The input fixes `as_of` at `2026-08-21T09:00:00Z`. One learner is incomplete exactly at the deadline, one is not yet due, and one finished before the cutoff. The expected report contains only learner `L-1`, marked `due`.
+The input pins `as_of` at `2026-08-21T09:00:00Z`. One learner sits incomplete exactly at the deadline, another is not yet due, and a third finished before the cutoff. The report should contain only learner `L-1`, tagged `due`. This is a cardinality reduction: three records in, one row out.
 
 ## Send a report request
 
-Infrai gives you object upload and a presigned download through one API key, using plain REST with no storage SDK to install. That keeps the integration surface to a curl call from any language. Set the credential, start the typed FastAPI service, then submit a course delivery snapshot:
+Infrai delivers object upload and presigned download through one API key, with plain REST and no storage SDK to install. That single key and one bill model keeps credential sprawl low. Set the credential, boot the typed FastAPI service, then push a course delivery snapshot:
 
 ```bash
 export INFRAI_API_KEY=your_key_here
@@ -48,23 +48,23 @@ Expected response shape:
 }
 ```
 
-The service creates the configured bucket as its normal storage setup, uploads a deterministic CSV object, and asks for a 15-minute GET link. Repeat submissions of identical report content use the same object key and idempotency key.
+The service provisions the configured bucket as its standard storage step, writes a deterministic CSV object, and requests a 15-minute GET link. Repeated identical reports reuse the same object key and idempotency key, so we avoid duplicate byte cost.
 
 ## The reporting rule
 
-A row is included when `deadline <= as_of` and `completed_at` is absent. Future deadlines and completed deliveries stay out. Rows are ordered by deadline, course ID, then learner ID so the same snapshot produces stable bytes.
+A row qualifies when `deadline <= as_of` and `completed_at` is absent. Future deadlines and completed deliveries stay excluded. Ordering by deadline, course ID, then learner ID yields stable bytes for a given snapshot, which matters when you compute retention over time.
 
-The one real gotcha is time: an educator export must carry an explicit, timezone-aware `as_of`. Using the server clock would make an audit rerun drift across the deadline boundary. The request model rejects timestamps without an offset.
+The one real gotcha is time: an educator export must carry an explicit, timezone-aware `as_of`. Server clock reliance would let an audit rerun drift across the deadline boundary, effectively sampling a different population. The request model rejects offset-less timestamps.
 
-The CSV columns are `course_id`, `course_title`, `learner_id`, `learner_name`, `deadline`, and `status`. This example stops at generating and signing one snapshot; scheduling and retention policy belong to the host product.
+The CSV columns are `course_id`, `course_title`, `learner_id`, `learner_name`, `deadline`, and `status`. This example stops at generating and signing one snapshot; scheduling and retention policy belong to the host product. We note each column adds fixed width, so cardinality of fields is known.
 
 ## Storage boundary
 
-`InfraiStorage` is deliberately small. It sends explicit HTTP methods, decodes the response envelope before making status decisions, backs off on rate limiting, and surfaces structured errors. The FastAPI route preserves upstream client rejections as 4xx responses and treats transport-side failures as gateway errors.
+`InfraiStorage` is deliberately small. It issues explicit HTTP methods, decodes the response envelope before status decisions, backs off on rate limits, and surfaces structured errors. The FastAPI route passes upstream client rejections as 4xx and treats transport failures as gateway errors.
 
-Bucket and object key are URL path segments for upload and signing. The presign body contains `op`, `expires_seconds`, and `response_disposition`; the CSV bytes are base64 only in the direct object upload body.
+Bucket and object key are URL path segments for upload and signing. The presign body carries `op`, `expires_seconds`, and `response_disposition`; CSV bytes are base64 only in the direct object upload body.
 
-For a command-line integration run, place the same JSON request on standard input:
+For a command-line integration run, feed the same JSON request on standard input:
 
 ```bash
 PYTHONPATH=src python run_export.py < report.json
